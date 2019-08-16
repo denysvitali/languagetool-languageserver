@@ -1,5 +1,6 @@
 package it.denv.languagetool.languageserver;
 
+import akka.io.TcpListener;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageClient;
@@ -7,6 +8,7 @@ import org.eclipse.lsp4j.services.LanguageClient;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.ServerSocket;
 import java.net.Socket;
 
 
@@ -26,18 +28,21 @@ public class App {
         }
 
         try {
-            Socket socket = new Socket(host, port);
+            ServerSocket s = new ServerSocket(port);
+            while(true){
+                Socket client = s.accept();
+                System.out.println("New client: " + client.getInetAddress().getHostAddress() + ":" +
+                        client.getPort());
+                InputStream in = client.getInputStream();
+                OutputStream out = client.getOutputStream();
 
-            InputStream in = socket.getInputStream();
-            OutputStream out = socket.getOutputStream();
+                LanguageToolLanguageServer server = new LanguageToolLanguageServer();
+                Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
 
-            LanguageToolLanguageServer server = new LanguageToolLanguageServer();
-            Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
-
-            LanguageClient client = launcher.getRemoteProxy();
-            server.connect(client);
-
-            launcher.startListening();
+                LanguageClient languageClient = launcher.getRemoteProxy();
+                server.connect(languageClient);
+                launcher.startListening();
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
