@@ -1,7 +1,12 @@
-import com.vladsch.flexmark.ast.Document;
+package it.denv.languagetool.languageserver;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.vladsch.flexmark.parser.Parser;
-import markdown.AnnotatedTextBuildingVisitor;
+import com.vladsch.flexmark.util.ast.Document;
+import it.denv.languagetool.languageserver.markdown.AnnotatedTextBuildingVisitor;
 import org.eclipse.lsp4j.*;
+import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -15,6 +20,9 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static org.eclipse.lsp4j.jsonrpc.messages.Either.forLeft;
 
 class LanguageToolLanguageServer implements LanguageServer, LanguageClientAware {
 
@@ -42,7 +50,13 @@ class LanguageToolLanguageServer implements LanguageServer, LanguageClientAware 
                         positionCalculator.getPosition(match.getToPos())));
         ret.setSeverity(DiagnosticSeverity.Warning);
         ret.setSource(String.format("LanguageTool: %s", match.getRule().getDescription()));
-        ret.setMessage(match.getMessage());
+
+        if(match.getSuggestedReplacements().size() != 0){
+            ret.setMessage(match.getMessage() + "\n" + "Suggested Replacements: " + String.join(", ",
+                    match.getSuggestedReplacements()));
+        } else {
+            ret.setMessage(match.getMessage());
+        }
         return ret;
     }
 
@@ -71,29 +85,29 @@ class LanguageToolLanguageServer implements LanguageServer, LanguageClientAware 
         return new FullTextDocumentService(documents) {
 
             @Override
-            public CompletableFuture<List<? extends Command>> codeAction(CodeActionParams params) {
+            public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
                 if (params.getContext().getDiagnostics().isEmpty()) {
                     return CompletableFuture.completedFuture(Collections.emptyList());
                 }
 
                 TextDocumentItem document = documents.get(params.getTextDocument().getUri());
-
                 List<RuleMatch> matches = validateDocument(document);
-
                 DocumentPositionCalculator positionCalculator = new DocumentPositionCalculator(document.getText());
+                Stream<RuleMatch> relevant = matches.stream().filter(m -> locationOverlaps(m, positionCalculator, params.getRange()));
+                List<Either<Command, CodeAction>> commands = relevant.flatMap(m -> getEditCommands(m, document, positionCalculator)).collect(Collectors.toList());
 
-                Stream<RuleMatch> relevant =
-                        matches.stream().filter(m -> locationOverlaps(m, positionCalculator, params.getRange()));
-
-                List<TextEditCommand> commands = relevant.flatMap(m -> getEditCommands(m, document, positionCalculator)).collect(Collectors.toList());
+                commands.stream().map(Either::getLeft).forEach(System.out::println);
 
                 return CompletableFuture.completedFuture(commands);
             }
 
             @NotNull
-            private Stream<TextEditCommand> getEditCommands(RuleMatch match, TextDocumentItem document, DocumentPositionCalculator positionCalculator) {
-                Range range = createDiagnostic(match, positionCalculator).getRange();
-                return match.getSuggestedReplacements().stream().map(str -> new TextEditCommand(str, range, document));
+            private Stream<Either<Command, CodeAction>> getEditCommands(RuleMatch match, TextDocumentItem document, DocumentPositionCalculator positionCalculator) {
+                Diagnostic diag = createDiagnostic(match, positionCalculator);
+                return match.getSuggestedReplacements().stream().map(str -> {
+                    Command ca = new TextEditCommand(str, diag.getRange(), document);
+                    return forLeft(ca);
+                });
             }
 
             @Override
@@ -136,7 +150,7 @@ class LanguageToolLanguageServer implements LanguageServer, LanguageClientAware 
         // long term is not desirable because other clients may behave differently.
         // See: https://github.com/Microsoft/vscode/issues/28732
         String uri = document.getUri();
-        Boolean isSupportedScheme = uri.startsWith("file:") || uri.startsWith("untitled:") ;
+        Boolean isSupportedScheme = uri.startsWith("file:") || uri.startsWith("untitled:");
 
         if (language == null || !isSupportedScheme) {
             return Collections.emptyList();
@@ -151,13 +165,15 @@ class LanguageToolLanguageServer implements LanguageServer, LanguageClientAware 
                     }
                     case "markdown": {
                         Parser p = Parser.builder().build();
-                        Document mdDocument = (Document) p.parse(document.getText());
+                        Document mdDocument = p.parse(document.getText());
 
                         AnnotatedTextBuildingVisitor builder = new AnnotatedTextBuildingVisitor();
                         builder.visit(mdDocument);
 
                         return languageTool.check(builder.getText());
                     }
+                    case "tex":
+                        return languageTool.check(document.getText());
                     default: {
                         throw new UnsupportedOperationException(String.format("Language, %s, is not supported.", languageId));
                     }
@@ -187,18 +203,96 @@ class LanguageToolLanguageServer implements LanguageServer, LanguageClientAware 
                     return ((CompletableFuture<Object>) (CompletableFuture) client.applyEdit(
                             new ApplyWorkspaceEditParams(
                                     new WorkspaceEdit(
-                                            (List<TextDocumentEdit>) (List) params.getArguments()))));
+                                            getWorkspaceArg(params.getArguments())
+                                    )
+                            )
+                    ));
                 }
                 return CompletableFuture.completedFuture(false);
             }
         };
     }
 
-    private void setLanguage(@NotNull Object settingsObject) {
-        Map<String, Object> settings = (Map<String, Object>) settingsObject;
-        Map<String, Object> languageServerExample = (Map<String, Object>) settings.get("languageTool");
-        String shortCode = ((String) languageServerExample.get("language"));
+    private static List<Either<TextDocumentEdit, ResourceOperation>> getWorkspaceArg(List<Object> objs) {
+        return objs.stream().map(o -> {
+            JsonObject obj = (JsonObject) o;
+            TextDocumentEdit textDocumentEdit = new TextDocumentEdit();
 
+
+            Iterator<JsonElement> iterator = obj.getAsJsonArray("edits").iterator();
+            Iterable<JsonElement> iterable = () -> iterator;
+
+            List<TextEdit> textEditList = StreamSupport.stream(iterable.spliterator(), false).map(
+                    el -> {
+                        JsonObject elObj = el.getAsJsonObject();
+                        TextEdit te = new TextEdit();
+
+                        String newText = elObj.get("newText").getAsString();
+                        te.setNewText(newText);
+
+                        Range range = new Range();
+                        Position startPos = new Position();
+                        Position endPos = new Position();
+
+                        startPos.setLine(
+                                elObj.get("range")
+                                        .getAsJsonObject()
+                                        .get("start")
+                                        .getAsJsonObject()
+                                        .get("line")
+                                        .getAsNumber().intValue()
+                        );
+
+                        startPos.setCharacter(
+                                elObj.get("range")
+                                        .getAsJsonObject()
+                                        .get("start")
+                                        .getAsJsonObject()
+                                        .get("character")
+                                        .getAsNumber().intValue()
+                        );
+
+                        endPos.setLine(
+                                elObj.get("range")
+                                        .getAsJsonObject()
+                                        .get("end")
+                                        .getAsJsonObject()
+                                        .get("line")
+                                        .getAsNumber().intValue()
+                        );
+
+                        endPos.setCharacter(
+                                elObj.get("range")
+                                        .getAsJsonObject()
+                                        .get("end")
+                                        .getAsJsonObject()
+                                        .get("character")
+                                        .getAsNumber().intValue()
+                        );
+
+                        range.setStart(startPos);
+                        range.setEnd(endPos);
+
+                        te.setRange(range);
+                        return te;
+                    }
+            ).collect(Collectors.toList());
+
+            JsonObject textDocumentJson = obj.getAsJsonObject("textDocument");
+
+            VersionedTextDocumentIdentifier versionedTextDocumentIdentifier = new VersionedTextDocumentIdentifier();
+            versionedTextDocumentIdentifier.setVersion(textDocumentJson.get("version").getAsNumber().intValue());
+            versionedTextDocumentIdentifier.setUri(textDocumentJson.get("uri").getAsString());
+            textDocumentEdit.setTextDocument(versionedTextDocumentIdentifier);
+
+            textDocumentEdit.setEdits(textEditList);
+            return Either.<TextDocumentEdit, ResourceOperation>forLeft(textDocumentEdit);
+        }).collect(Collectors.toList());
+    }
+
+    private void setLanguage(@NotNull Object settingsObject) {
+        JsonObject languageServerExample = ((JsonObject) settingsObject).getAsJsonObject("languageTool");
+        String shortCode = languageServerExample.get("language").getAsString();
         setLanguage(shortCode);
     }
 

@@ -1,6 +1,6 @@
-package markdown;
+package it.denv.languagetool.languageserver.markdown;
 
-import com.vladsch.flexmark.ast.Node;
+import com.vladsch.flexmark.util.ast.Node;
 
 class PrintAstVisitor {
     public void visit(Node node, int indent) {

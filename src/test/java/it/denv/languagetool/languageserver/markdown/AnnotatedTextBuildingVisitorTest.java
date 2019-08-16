@@ -1,8 +1,8 @@
-package markdown;
+package it.denv.languagetool.languageserver.markdown;
 
-import com.vladsch.flexmark.ast.Document;
-import com.vladsch.flexmark.ast.Node;
 import com.vladsch.flexmark.parser.Parser;
+import com.vladsch.flexmark.util.ast.Document;
+import com.vladsch.flexmark.util.ast.Node;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.languagetool.markup.AnnotatedText;
@@ -14,12 +14,12 @@ public class AnnotatedTextBuildingVisitorTest {
     void test() throws IOException {
         Parser p = Parser.builder().build();
 
-        Node document = p.parse("# Heading\n" +
+        Document document = p.parse("# Heading\n" +
                 "Paragraph with\n" +
                 "multiple lines and [link](example.com)");
 
         AnnotatedTextBuildingVisitor visitor = new AnnotatedTextBuildingVisitor();
-        visitor.visit((Document) document);
+        visitor.visit(document);
         AnnotatedText text = visitor.getText();
 
         Assertions.assertEquals("Heading\nParagraph with multiple lines and link", text.getPlainText());

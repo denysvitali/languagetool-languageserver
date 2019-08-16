@@ -1,3 +1,5 @@
+package it.denv.languagetool.languageserver;
+
 import org.eclipse.lsp4j.Position;
 import org.jetbrains.annotations.NotNull;
 

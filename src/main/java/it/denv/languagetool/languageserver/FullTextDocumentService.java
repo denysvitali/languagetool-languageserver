@@ -1,3 +1,5 @@
+package it.denv.languagetool.languageserver;
+
 import org.eclipse.lsp4j.*;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.TextDocumentService;
@@ -25,11 +27,6 @@ class FullTextDocumentService implements TextDocumentService {
     }
 
     @Override
-    public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(TextDocumentPositionParams position) {
-        return null;
-    }
-
-    @Override
     public CompletableFuture<CompletionItem> resolveCompletionItem(CompletionItem unresolved) {
         return null;
     }
@@ -45,7 +42,7 @@ class FullTextDocumentService implements TextDocumentService {
     }
 
     @Override
-    public CompletableFuture<List<? extends Location>> definition(TextDocumentPositionParams position) {
+    public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(TextDocumentPositionParams position) {
         return null;
     }
 
@@ -56,16 +53,6 @@ class FullTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<? extends DocumentHighlight>> documentHighlight(TextDocumentPositionParams position) {
-        return null;
-    }
-
-    @Override
-    public CompletableFuture<List<? extends SymbolInformation>> documentSymbol(DocumentSymbolParams params) {
-        return null;
-    }
-
-    @Override
-    public CompletableFuture<List<? extends Command>> codeAction(CodeActionParams params) {
         return null;
     }
 
